@@ -13,6 +13,10 @@ const {
   SHOPIFY_API_VERSION = "2026-04",
   HOST = "http://localhost:3000",
   PORT = "3000",
+  // Where to persist the token store. On Render, point this at a mounted disk
+  // (e.g. /data/tokens.json) so tokens survive deploys and restarts. Defaults
+  // to a file in the project root for local development.
+  TOKENS_FILE: TOKENS_FILE_ENV = "",
 } = process.env;
 
 const app = express();
@@ -30,7 +34,8 @@ function isValidShop(shop: string): boolean {
 // --- Dead-simple per-shop token store (a JSON file; swap for a DB later) ---
 // Shopify no longer accepts non-expiring tokens, so we store the expiring
 // offline token together with its refresh token and expiry timestamps.
-const TOKENS_FILE = path.join(__dirname, "..", "tokens.json");
+const TOKENS_FILE =
+  TOKENS_FILE_ENV || path.join(__dirname, "..", "tokens.json");
 
 interface TokenRecord {
   access_token: string;

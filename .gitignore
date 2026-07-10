@@ -2,3 +2,5 @@ node_modules
 dist
 .env
 tokens.json
+
+.DS_Store
