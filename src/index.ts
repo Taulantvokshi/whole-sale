@@ -21,6 +21,16 @@ const {
 
 const app = express();
 
+// Allow the browser client (served from a different origin) to call the API.
+// Simple GET endpoints, so a permissive header plus preflight handling is enough.
+app.use((req: Request, res: Response, next) => {
+  res.header("Access-Control-Allow-Origin", "*");
+  res.header("Access-Control-Allow-Methods", "GET,OPTIONS");
+  res.header("Access-Control-Allow-Headers", "Content-Type");
+  if (req.method === "OPTIONS") return res.sendStatus(204);
+  next();
+});
+
 // Serve the static HTML page where the merchant starts the install.
 app.use(express.static(path.join(__dirname, "..", "public")));
 
