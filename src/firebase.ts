@@ -1,15 +1,11 @@
 import { initializeApp, cert } from "firebase-admin/app";
 import { getAuth } from "firebase-admin/auth";
+import { config } from "./config";
 
 // The service-account JSON is provided base64-encoded via FIREBASE_SERVICE_ACCOUNT
 // (avoids newline/quoting issues with the private key in env files).
-const encoded = process.env.FIREBASE_SERVICE_ACCOUNT;
-if (!encoded) {
-  throw new Error("FIREBASE_SERVICE_ACCOUNT is not set");
-}
-
 const serviceAccount = JSON.parse(
-  Buffer.from(encoded, "base64").toString("utf8")
+  Buffer.from(config.firebaseServiceAccount, "base64").toString("utf8")
 );
 
 const app = initializeApp({

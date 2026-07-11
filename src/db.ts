@@ -1,12 +1,10 @@
 import { Pool } from "pg";
+import { config } from "./config";
 
 // A single shared connection pool for the app. On Render, point DATABASE_URL at
 // the *internal* database URL (no SSL needed). Locally we use the *external*
 // URL, which Render requires be reached over SSL.
-const connectionString = process.env.DATABASE_URL;
-if (!connectionString) {
-  throw new Error("DATABASE_URL is not set");
-}
+const connectionString = config.databaseUrl;
 
 // External Render hostnames contain ".render.com" and need SSL; the internal
 // hostname (dpg-...-a) does not.
