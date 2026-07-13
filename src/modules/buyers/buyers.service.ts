@@ -1,12 +1,25 @@
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, sql } from "drizzle-orm";
 import { db } from "../../db/client";
 import { buyers, orders } from "../../db/schema";
 import { NotFound } from "../../lib/errors";
 
-// All buyer businesses that belong to an owner.
+// All buyer businesses that belong to an owner. `registered` is true when the
+// buyer already has an account — either already linked (buyer_uid) or their
+// contact email matches an existing user. Registered buyers can be sent orders
+// directly (no share link needed).
 export async function listBuyers(ownerUid: string) {
   return db
-    .select()
+    .select({
+      id: buyers.id,
+      ownerUid: buyers.ownerUid,
+      businessName: buyers.businessName,
+      contactEmail: buyers.contactEmail,
+      buyerUid: buyers.buyerUid,
+      createdAt: buyers.createdAt,
+      registered: sql<boolean>`(${buyers.buyerUid} is not null or exists (
+        select 1 from users u where lower(u.email) = lower(${buyers.contactEmail})
+      ))`,
+    })
     .from(buyers)
     .where(eq(buyers.ownerUid, ownerUid))
     .orderBy(desc(buyers.createdAt));

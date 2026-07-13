@@ -4,11 +4,13 @@ import { users, shops } from "../../db/schema";
 
 export type Role = "owner" | "buyer" | "admin";
 
-// Ensure a row exists for this Firebase user (first login creates it).
+// Ensure a row exists for this Firebase user (first login creates it). New users
+// default to 'buyer' — only an admin promotes someone to 'owner'. Existing rows
+// keep their role (we only update the email on conflict).
 export async function upsertUser(uid: string, email?: string): Promise<void> {
   await db
     .insert(users)
-    .values({ firebaseUid: uid, email: email ?? null })
+    .values({ firebaseUid: uid, email: email ?? null, role: "buyer" })
     .onConflictDoUpdate({
       target: users.firebaseUid,
       set: { email: email ?? null },

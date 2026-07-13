@@ -1,7 +1,6 @@
 import { Router, Request, Response } from "express";
 import { requireAuth } from "../../middleware/auth";
 import { asyncHandler } from "../../middleware/asyncHandler";
-import { setRole } from "../users/users.service";
 import { config } from "../../config";
 import {
   startConnect,
@@ -50,7 +49,7 @@ shopifyRouter.get(
 
     try {
       await completeConnect(shop, code, ownerUid);
-      await setRole(ownerUid, "owner");
+      // Note: connecting a store no longer grants 'owner' — only an admin does.
       console.log(`Connected ${shop} for user ${ownerUid}`);
       // Back to the app; the client will now see the connected store via /me.
       res.redirect(`${config.clientUrl}/?connected=1`);

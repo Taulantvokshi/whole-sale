@@ -7,6 +7,7 @@ import {
   templates,
   templateItems,
   buyers,
+  users,
 } from "../../db/schema";
 import { config } from "../../config";
 import { BadRequest, Forbidden, NotFound } from "../../lib/errors";
@@ -36,6 +37,19 @@ export async function createOrder(
       .from(buyers)
       .where(and(eq(buyers.id, input.buyerId), eq(buyers.ownerUid, ownerUid)));
     if (!buyer) throw new NotFound("Buyer not found");
+
+    // If the buyer isn't linked yet but their contact email matches an existing
+    // account, link them now so the order goes straight to that user's dashboard.
+    if (!buyer.buyerUid && buyer.contactEmail) {
+      const [match] = await tx
+        .select({ uid: users.firebaseUid })
+        .from(users)
+        .where(sql`lower(${users.email}) = lower(${buyer.contactEmail})`);
+      if (match) {
+        await tx.update(buyers).set({ buyerUid: match.uid }).where(eq(buyers.id, buyer.id));
+        buyer.buyerUid = match.uid;
+      }
+    }
 
     const token = crypto.randomBytes(24).toString("hex");
     const [order] = await tx
@@ -103,7 +117,9 @@ async function loadOrderItems(orderId: string) {
 
 // --- Read ---
 
-// Orders visible to a user: those they own, plus those for a business they claimed.
+// Orders visible to a user: those they own, plus those for a business they
+// claimed. Includes per-order rollups (item count, selected units, and the
+// estimated value = Σ selected qty × wholesale price) for list/dashboard views.
 export async function listOrders(uid: string) {
   return db
     .select({
@@ -114,10 +130,15 @@ export async function listOrders(uid: string) {
       submittedAt: orders.submittedAt,
       buyerId: orders.buyerId,
       businessName: buyers.businessName,
+      itemCount: sql<number>`cast(count(${orderItems.id}) as int)`,
+      selectedUnits: sql<number>`cast(coalesce(sum(case when ${orderItems.selected} then ${orderItems.buyerQty} else 0 end), 0) as int)`,
+      totalValue: sql<number>`cast(coalesce(sum(case when ${orderItems.selected} then ${orderItems.buyerQty} * coalesce(${orderItems.wholesalePrice}, 0) else 0 end), 0) as float8)`,
     })
     .from(orders)
     .leftJoin(buyers, eq(orders.buyerId, buyers.id))
+    .leftJoin(orderItems, eq(orderItems.orderId, orders.id))
     .where(or(eq(orders.ownerUid, uid), eq(buyers.buyerUid, uid)))
+    .groupBy(orders.id, buyers.id)
     .orderBy(desc(orders.createdAt));
 }
 
