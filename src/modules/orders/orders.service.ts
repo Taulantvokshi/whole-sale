@@ -322,6 +322,18 @@ export async function updateOrderByOwner(
   return getOrder(ownerUid, orderId);
 }
 
+// Owner deletes an order outright. Items and their comment threads go with it
+// (ON DELETE CASCADE); the share link stops working. Owner-only — a buyer
+// declines by simply not submitting.
+export async function deleteOrder(ownerUid: string, orderId: string) {
+  const deleted = await db
+    .delete(orders)
+    .where(and(eq(orders.id, orderId), eq(orders.ownerUid, ownerUid)))
+    .returning({ id: orders.id });
+  if (deleted.length === 0) throw new NotFound("Order not found");
+  return { deleted: true };
+}
+
 // Buyer (or owner) edits a single line item's buyer-facing fields.
 export async function updateOrderItem(
   uid: string,

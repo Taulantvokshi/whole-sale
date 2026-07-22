@@ -21,7 +21,7 @@ const contactEmail = z
   .transform((e) => e.trim().toLowerCase());
 
 const createBuyerSchema = z.object({
-  businessName: z.string().trim().min(1, "Business name is required"),
+  businessName: z.string().trim().min(1, "Company is required"),
   firstName: z.string().trim().min(1, "First name is required"),
   lastName: z.string().trim().min(1, "Last name is required"),
   contactEmail,

@@ -10,6 +10,7 @@ import {
   getSharePreview,
   claimShare,
   updateOrderByOwner,
+  deleteOrder,
   updateOrderItem,
   addItemComment,
   getOrderItemProduct,
@@ -106,6 +107,15 @@ ordersRouter.patch(
     const id = parse(idParam, req.params.id);
     const body = parse(ownerUpdateSchema, req.body);
     res.json(await updateOrderByOwner(req.uid!, id, body));
+  })
+);
+
+ordersRouter.delete(
+  "/orders/:id",
+  requireAuth,
+  asyncHandler(async (req: Request, res: Response) => {
+    const id = parse(idParam, req.params.id);
+    res.json(await deleteOrder(req.uid!, id));
   })
 );
 
