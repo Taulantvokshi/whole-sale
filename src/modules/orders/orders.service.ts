@@ -140,7 +140,7 @@ function toCommentView(
   return {
     id: c.id,
     orderItemId: c.orderItemId,
-    author: c.authorUid === ownerUid ? ("owner" as const) : ("buyer" as const),
+    author: c.authorUid === ownerUid ? ("store" as const) : ("buyer" as const),
     authorEmail: c.authorEmail,
     body: c.body,
     createdAt: c.createdAt,
