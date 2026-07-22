@@ -11,6 +11,7 @@ import {
   claimShare,
   updateOrderByOwner,
   updateOrderItem,
+  addItemComment,
   submitOrder,
 } from "./orders.service";
 
@@ -115,6 +116,21 @@ ordersRouter.patch(
     const itemId = parse(idParam, req.params.itemId);
     const body = parse(itemUpdateSchema, req.body);
     res.json(await updateOrderItem(req.uid!, id, itemId, body));
+  })
+);
+
+const commentSchema = z.object({
+  body: z.string().trim().min(1, "Write a message first").max(2000),
+});
+
+ordersRouter.post(
+  "/orders/:id/items/:itemId/comments",
+  requireAuth,
+  asyncHandler(async (req: Request, res: Response) => {
+    const id = parse(idParam, req.params.id);
+    const itemId = parse(idParam, req.params.itemId);
+    const { body } = parse(commentSchema, req.body);
+    res.status(201).json(await addItemComment(req.uid!, id, itemId, body));
   })
 );
 

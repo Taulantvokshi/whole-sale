@@ -120,8 +120,22 @@ export const orderItems = pgTable("order_items", {
   // Buyer-set values.
   selected: boolean("selected").notNull().default(false),
   buyerQty: integer("buyer_qty").notNull().default(0),
+  // Legacy single comment — superseded by order_item_comments (kept so the
+  // previously-deployed server keeps working; new code never writes it).
   comment: text("comment"),
   position: integer("position").notNull().default(0),
+});
+
+// Per-item conversation between the buyer and the owner. Author side is
+// derived at read time by comparing authorUid against the order's ownerUid.
+export const orderItemComments = pgTable("order_item_comments", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  orderItemId: uuid("order_item_id")
+    .notNull()
+    .references(() => orderItems.id, { onDelete: "cascade" }),
+  authorUid: text("author_uid").notNull(),
+  body: text("body").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
 });
 
 // Inferred row types for use across services/routes.

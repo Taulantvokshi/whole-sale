@@ -15,6 +15,13 @@
       "when": 1784671200000,
       "tag": "0001_buyer_contact",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1784671300000,
+      "tag": "0002_item_comments",
+      "breakpoints": true
     }
   ]
 }

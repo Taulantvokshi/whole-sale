@@ -1,9 +1,10 @@
 import crypto from "crypto";
-import { and, desc, eq, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, or, sql } from "drizzle-orm";
 import { db } from "../../db/client";
 import {
   orders,
   orderItems,
+  orderItemComments,
   templates,
   templateItems,
   buyers,
@@ -130,6 +131,48 @@ async function loadOrderItems(orderId: string) {
     .orderBy(orderItems.position);
 }
 
+// A comment as sent to the client: author side derived from the order's owner.
+function toCommentView(
+  c: typeof orderItemComments.$inferSelect & { authorEmail: string | null },
+  ownerUid: string
+) {
+  return {
+    id: c.id,
+    orderItemId: c.orderItemId,
+    author: c.authorUid === ownerUid ? ("owner" as const) : ("buyer" as const),
+    authorEmail: c.authorEmail,
+    body: c.body,
+    createdAt: c.createdAt,
+  };
+}
+
+// All comment threads for an order, keyed by item id (one query for the order).
+async function loadCommentsByItem(orderId: string, ownerUid: string) {
+  const rows = await db
+    .select({
+      id: orderItemComments.id,
+      orderItemId: orderItemComments.orderItemId,
+      authorUid: orderItemComments.authorUid,
+      body: orderItemComments.body,
+      createdAt: orderItemComments.createdAt,
+      authorEmail: users.email,
+    })
+    .from(orderItemComments)
+    .innerJoin(orderItems, eq(orderItems.id, orderItemComments.orderItemId))
+    .leftJoin(users, eq(users.firebaseUid, orderItemComments.authorUid))
+    .where(eq(orderItems.orderId, orderId))
+    .orderBy(asc(orderItemComments.createdAt));
+
+  const byItem = new Map<string, ReturnType<typeof toCommentView>[]>();
+  for (const row of rows) {
+    const view = toCommentView(row, ownerUid);
+    const list = byItem.get(row.orderItemId) ?? [];
+    list.push(view);
+    byItem.set(row.orderItemId, list);
+  }
+  return byItem;
+}
+
 // --- Read ---
 
 // Orders visible to a user: those they own, plus those for a business they
@@ -163,8 +206,18 @@ export async function listOrders(uid: string) {
 
 export async function getOrder(uid: string, orderId: string) {
   const { order, buyer } = await requireOrderAccess(uid, orderId);
-  const items = await loadOrderItems(orderId);
-  return { ...order, buyer, items };
+  const [items, commentsByItem] = await Promise.all([
+    loadOrderItems(orderId),
+    loadCommentsByItem(orderId, order.ownerUid),
+  ]);
+  return {
+    ...order,
+    buyer,
+    items: items.map((it) => ({
+      ...it,
+      comments: commentsByItem.get(it.id) ?? [],
+    })),
+  };
 }
 
 // --- Share link (public preview + claim) ---
@@ -287,6 +340,36 @@ export async function updateOrderItem(
     .returning();
   if (updated.length === 0) throw new NotFound("Item not found");
   return updated[0];
+}
+
+// Either side of an order posts a message on one line item. Unlike buyer field
+// edits (gated on 'pending'), the conversation stays open for the whole order
+// lifecycle — that's how the owner responds after submission.
+export async function addItemComment(
+  uid: string,
+  orderId: string,
+  itemId: string,
+  body: string
+) {
+  const { order } = await requireOrderAccess(uid, orderId);
+  const [item] = await db
+    .select({ id: orderItems.id })
+    .from(orderItems)
+    .where(and(eq(orderItems.id, itemId), eq(orderItems.orderId, orderId)));
+  if (!item) throw new NotFound("Item not found");
+
+  const [row] = await db
+    .insert(orderItemComments)
+    .values({ orderItemId: itemId, authorUid: uid, body })
+    .returning();
+  const [author] = await db
+    .select({ email: users.email })
+    .from(users)
+    .where(eq(users.firebaseUid, uid));
+  return toCommentView(
+    { ...row, authorEmail: author?.email ?? null },
+    order.ownerUid
+  );
 }
 
 // Buyer submits ("Send order").
