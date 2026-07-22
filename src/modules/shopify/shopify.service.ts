@@ -246,6 +246,53 @@ export async function listCollections(uid: string) {
   return json.data.collections.edges.map((e: any) => e.node);
 }
 
+// Full details for one product, fetched with the OWNER's store token — callers
+// pass the order's ownerUid, so buyers see details of products shared with
+// them without having Shopify access themselves. Returns null when the
+// product no longer exists in the store (deleted since the snapshot).
+export async function getProductDetails(ownerUid: string, rawId: string) {
+  const { shop, token } = await requireShopToken(ownerUid);
+  const productId = rawId.startsWith("gid://")
+    ? rawId
+    : `gid://shopify/Product/${rawId}`;
+
+  const query = `query($id: ID!) {
+    product(id: $id) {
+      id
+      title
+      description
+      vendor
+      productType
+      tags
+      onlineStoreUrl
+      images(first: 10) { edges { node { url altText } } }
+      options { name values }
+      variants(first: 50) {
+        edges { node { id title sku price availableForSale } }
+      }
+    }
+  }`;
+  const json = await shopifyGraphql(shop, token, query, { id: productId });
+  if (json?.errors) {
+    console.error("Shopify API error:", JSON.stringify(json));
+    throw new AppError(502, "Unexpected API response");
+  }
+  const p = json?.data?.product;
+  if (!p) return null;
+  return {
+    id: p.id,
+    title: p.title,
+    description: p.description ?? "",
+    vendor: p.vendor ?? null,
+    productType: p.productType || null,
+    tags: p.tags ?? [],
+    onlineStoreUrl: p.onlineStoreUrl ?? null,
+    images: p.images.edges.map((e: any) => e.node),
+    options: (p.options ?? []).filter((o: any) => o.name !== "Title"),
+    variants: p.variants.edges.map((e: any) => e.node),
+  };
+}
+
 export async function listCollectionProducts(uid: string, rawId: string) {
   if (!rawId) throw new BadRequest("Missing collection id. Use ?collection=<id>");
   const { shop, token } = await requireShopToken(uid);

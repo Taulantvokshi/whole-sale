@@ -12,6 +12,7 @@ import {
   updateOrderByOwner,
   updateOrderItem,
   addItemComment,
+  getOrderItemProduct,
   submitOrder,
 } from "./orders.service";
 
@@ -116,6 +117,16 @@ ordersRouter.patch(
     const itemId = parse(idParam, req.params.itemId);
     const body = parse(itemUpdateSchema, req.body);
     res.json(await updateOrderItem(req.uid!, id, itemId, body));
+  })
+);
+
+ordersRouter.get(
+  "/orders/:id/items/:itemId/product",
+  requireAuth,
+  asyncHandler(async (req: Request, res: Response) => {
+    const id = parse(idParam, req.params.id);
+    const itemId = parse(idParam, req.params.itemId);
+    res.json(await getOrderItemProduct(req.uid!, id, itemId));
   })
 );
 

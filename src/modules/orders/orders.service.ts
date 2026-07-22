@@ -14,6 +14,7 @@ import {
 import { config } from "../../config";
 import { BadRequest, Forbidden, NotFound } from "../../lib/errors";
 import { setRoleIfUnset } from "../users/users.service";
+import { getProductDetails } from "../shopify/shopify.service";
 
 function shareUrl(token: string): string {
   return `${config.clientUrl}/share/${token}`;
@@ -340,6 +341,26 @@ export async function updateOrderItem(
     .returning();
   if (updated.length === 0) throw new NotFound("Item not found");
   return updated[0];
+}
+
+// Full Shopify details for one order item's product, visible to both sides of
+// the order. Fetched with the order OWNER's store token (the buyer has no
+// Shopify access of their own). `product` is null if it was deleted from the
+// store — callers fall back to the snapshot fields on the item.
+export async function getOrderItemProduct(
+  uid: string,
+  orderId: string,
+  itemId: string
+) {
+  const { order } = await requireOrderAccess(uid, orderId);
+  const [item] = await db
+    .select()
+    .from(orderItems)
+    .where(and(eq(orderItems.id, itemId), eq(orderItems.orderId, orderId)));
+  if (!item) throw new NotFound("Item not found");
+
+  const product = await getProductDetails(order.ownerUid, item.productId);
+  return { product };
 }
 
 // Either side of an order posts a message on one line item. Unlike buyer field
