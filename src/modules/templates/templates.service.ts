@@ -12,7 +12,8 @@ export interface TemplateItemInput {
   minQty?: number;
 }
 
-// List an owner's templates with a product count for each.
+// List an owner's templates with a product count and the first few product
+// images (by position) so the list can render visual cards.
 export async function listTemplates(ownerUid: string) {
   return db
     .select({
@@ -21,6 +22,13 @@ export async function listTemplates(ownerUid: string) {
       createdAt: templates.createdAt,
       updatedAt: templates.updatedAt,
       itemCount: sql<number>`cast(count(${templateItems.id}) as int)`,
+      previewImages: sql<string[] | null>`(
+        select array_agg(u.image_url) from (
+          select ti.image_url from template_items ti
+          where ti.template_id = ${templates.id} and ti.image_url is not null
+          order by ti.position limit 4
+        ) u
+      )`,
     })
     .from(templates)
     .leftJoin(templateItems, eq(templateItems.templateId, templates.id))
