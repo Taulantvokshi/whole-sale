@@ -1,6 +1,6 @@
 import { and, desc, eq, sql } from "drizzle-orm";
 import { db } from "../../db/client";
-import { buyers, orders, users } from "../../db/schema";
+import { buyers, orders, orderItems, users } from "../../db/schema";
 import { Conflict, NotFound, isUniqueViolation } from "../../lib/errors";
 
 // `registered` is true when the buyer already has a buyer account — either
@@ -28,10 +28,16 @@ const buyerColumns = {
   accountEmail: users.email,
 };
 
-// All buyer businesses that belong to an owner.
+// All buyer businesses that belong to an owner, with order rollups for the
+// directory view (how many sheets shared, when the last one went out).
 export async function listBuyers(ownerUid: string) {
   return db
-    .select({ ...buyerColumns, registered: registeredSql })
+    .select({
+      ...buyerColumns,
+      registered: registeredSql,
+      orderCount: sql<number>`cast((select count(*) from orders o where o.buyer_id = ${buyers.id}) as int)`,
+      lastOrderAt: sql<string | null>`(select max(o.created_at) from orders o where o.buyer_id = ${buyers.id})`,
+    })
     .from(buyers)
     .leftJoin(users, eq(users.firebaseUid, buyers.buyerUid))
     .where(eq(buyers.ownerUid, ownerUid))
@@ -93,7 +99,21 @@ export async function updateBuyer(
   }
 }
 
+// Remove a buyer connection. Orders are kept (orders.buyer_id is ON DELETE
+// SET NULL) but detach from the business — and the buyer's account loses
+// access to them, since access is derived through the buyer row.
+export async function deleteBuyer(ownerUid: string, buyerId: string) {
+  const deleted = await db
+    .delete(buyers)
+    .where(and(eq(buyers.id, buyerId), eq(buyers.ownerUid, ownerUid)))
+    .returning({ id: buyers.id });
+  if (deleted.length === 0) throw new NotFound("Buyer not found");
+  return { deleted: true };
+}
+
 // A single buyer (scoped to its owner) plus the orders under that business.
+// Orders carry the same rollups as listOrders so the client renders them with
+// the same card everywhere.
 export async function getBuyerWithOrders(ownerUid: string, buyerId: string) {
   const [buyer] = await db
     .select(buyerColumns)
@@ -103,10 +123,30 @@ export async function getBuyerWithOrders(ownerUid: string, buyerId: string) {
   if (!buyer) throw new NotFound("Buyer not found");
 
   const buyerOrders = await db
-    .select()
+    .select({
+      id: orders.id,
+      status: orders.status,
+      createdAt: orders.createdAt,
+      updatedAt: orders.updatedAt,
+      submittedAt: orders.submittedAt,
+      buyerId: orders.buyerId,
+      ownerUid: orders.ownerUid,
+      itemCount: sql<number>`cast(count(${orderItems.id}) as int)`,
+      selectedUnits: sql<number>`cast(coalesce(sum(case when ${orderItems.selected} then ${orderItems.buyerQty} else 0 end), 0) as int)`,
+      totalValue: sql<number>`cast(coalesce(sum(case when ${orderItems.selected} then ${orderItems.buyerQty} * coalesce(${orderItems.wholesalePrice}, 0) else 0 end), 0) as float8)`,
+    })
     .from(orders)
+    .leftJoin(orderItems, eq(orderItems.orderId, orders.id))
     .where(eq(orders.buyerId, buyerId))
+    .groupBy(orders.id)
     .orderBy(desc(orders.createdAt));
 
-  return { ...buyer, orders: buyerOrders };
+  return {
+    ...buyer,
+    orders: buyerOrders.map((o) => ({
+      ...o,
+      businessName: buyer.businessName,
+      storeName: null,
+    })),
+  };
 }

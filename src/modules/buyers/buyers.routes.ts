@@ -7,6 +7,7 @@ import {
   listBuyers,
   createBuyer,
   updateBuyer,
+  deleteBuyer,
   getBuyerWithOrders,
 } from "./buyers.service";
 
@@ -63,6 +64,15 @@ buyersRouter.patch(
     const id = parse(idParam, req.params.id);
     const body = parse(updateBuyerSchema, req.body);
     res.json(await updateBuyer(req.uid!, id, body));
+  })
+);
+
+buyersRouter.delete(
+  "/buyers/:id",
+  requireAuth,
+  asyncHandler(async (req: Request, res: Response) => {
+    const id = parse(idParam, req.params.id);
+    res.json(await deleteBuyer(req.uid!, id));
   })
 );
 
