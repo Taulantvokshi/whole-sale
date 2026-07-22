@@ -1,3 +1,4 @@
+import { sql } from "drizzle-orm";
 import {
   pgTable,
   text,
@@ -7,6 +8,7 @@ import {
   numeric,
   timestamp,
   uuid,
+  uniqueIndex,
 } from "drizzle-orm/pg-core";
 
 // --- Existing tables (already present in the live DB) ---
@@ -36,16 +38,30 @@ export const shops = pgTable("shops", {
 
 // --- New tables (wholesale MVP) ---
 
-// A buyer business (e.g. "B-Jewelery") that belongs to one owner. `buyerUid` is
-// null until the buyer signs in and claims it via a share link.
-export const buyers = pgTable("buyers", {
-  id: uuid("id").defaultRandom().primaryKey(),
-  ownerUid: text("owner_uid").notNull(),
-  businessName: text("business_name").notNull(),
-  contactEmail: text("contact_email"),
-  buyerUid: text("buyer_uid"),
-  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
-});
+// A buyer business (e.g. "B-Jewelery") that belongs to one owner — this row IS
+// the owner↔buyer connection. `buyerUid` is null until the buyer signs in and
+// claims it via a share link (claim requires their email to match
+// contactEmail; after that, identity is buyerUid and the email is just contact
+// info). first/last name + email are required for new rows via route
+// validation; columns stay nullable for legacy rows.
+export const buyers = pgTable(
+  "buyers",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    ownerUid: text("owner_uid").notNull(),
+    businessName: text("business_name").notNull(),
+    firstName: text("first_name"),
+    lastName: text("last_name"),
+    contactEmail: text("contact_email"),
+    buyerUid: text("buyer_uid"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("buyers_owner_email_unique")
+      .on(t.ownerUid, sql`lower(${t.contactEmail})`)
+      .where(sql`${t.contactEmail} is not null`),
+  ]
+);
 
 // A reusable curated product list the owner builds from their Shopify catalog.
 export const templates = pgTable("templates", {

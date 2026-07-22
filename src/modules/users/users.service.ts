@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import { db } from "../../db/client";
 import { users, shops } from "../../db/schema";
 
@@ -21,6 +21,15 @@ export async function upsertUser(uid: string, email?: string): Promise<void> {
 // clobber an existing role (e.g. an admin who later connects a store).
 export async function setRole(uid: string, role: Role): Promise<void> {
   await db.update(users).set({ role }).where(eq(users.firebaseUid, uid));
+}
+
+// Assign a role only when the user has none yet — never demotes an existing
+// owner/admin (e.g. an owner claiming a buyer invite keeps their role).
+export async function setRoleIfUnset(uid: string, role: Role): Promise<void> {
+  await db
+    .update(users)
+    .set({ role })
+    .where(and(eq(users.firebaseUid, uid), isNull(users.role)));
 }
 
 export async function getUserRole(uid: string): Promise<string | null> {

@@ -8,10 +8,11 @@ import {
   templateItems,
   buyers,
   users,
+  shops,
 } from "../../db/schema";
 import { config } from "../../config";
 import { BadRequest, Forbidden, NotFound } from "../../lib/errors";
-import { setRole } from "../users/users.service";
+import { setRoleIfUnset } from "../users/users.service";
 
 function shareUrl(token: string): string {
   return `${config.clientUrl}/share/${token}`;
@@ -38,13 +39,27 @@ export async function createOrder(
       .where(and(eq(buyers.id, input.buyerId), eq(buyers.ownerUid, ownerUid)));
     if (!buyer) throw new NotFound("Buyer not found");
 
+    // Claiming is gated on this email, so an order without one is unclaimable.
+    if (!buyer.contactEmail) {
+      throw new BadRequest(
+        "This buyer has no contact email. Add one before sharing."
+      );
+    }
+
     // If the buyer isn't linked yet but their contact email matches an existing
-    // account, link them now so the order goes straight to that user's dashboard.
-    if (!buyer.buyerUid && buyer.contactEmail) {
+    // buyer account, link them now so the order goes straight to that user's
+    // dashboard. The role filter keeps owner/admin accounts from being silently
+    // attached — they can still claim explicitly via the link.
+    if (!buyer.buyerUid) {
       const [match] = await tx
         .select({ uid: users.firebaseUid })
         .from(users)
-        .where(sql`lower(${users.email}) = lower(${buyer.contactEmail})`);
+        .where(
+          and(
+            sql`lower(${users.email}) = lower(${buyer.contactEmail})`,
+            eq(users.role, "buyer")
+          )
+        );
       if (match) {
         await tx.update(buyers).set({ buyerUid: match.uid }).where(eq(buyers.id, buyer.id));
         buyer.buyerUid = match.uid;
@@ -130,15 +145,19 @@ export async function listOrders(uid: string) {
       submittedAt: orders.submittedAt,
       buyerId: orders.buyerId,
       businessName: buyers.businessName,
+      // Which store sent the sheet — lets the buyer group orders by store.
+      ownerUid: orders.ownerUid,
+      storeName: shops.shop,
       itemCount: sql<number>`cast(count(${orderItems.id}) as int)`,
       selectedUnits: sql<number>`cast(coalesce(sum(case when ${orderItems.selected} then ${orderItems.buyerQty} else 0 end), 0) as int)`,
       totalValue: sql<number>`cast(coalesce(sum(case when ${orderItems.selected} then ${orderItems.buyerQty} * coalesce(${orderItems.wholesalePrice}, 0) else 0 end), 0) as float8)`,
     })
     .from(orders)
     .leftJoin(buyers, eq(orders.buyerId, buyers.id))
+    .leftJoin(shops, eq(shops.ownerUid, orders.ownerUid))
     .leftJoin(orderItems, eq(orderItems.orderId, orders.id))
     .where(or(eq(orders.ownerUid, uid), eq(buyers.buyerUid, uid)))
-    .groupBy(orders.id, buyers.id)
+    .groupBy(orders.id, buyers.id, shops.shop)
     .orderBy(desc(orders.createdAt));
 }
 
@@ -170,8 +189,15 @@ export async function getSharePreview(token: string) {
 }
 
 // A signed-in Google user claims the business behind a share link so they can
-// edit/submit. Sets the buyer's uid + marks the user as a buyer.
-export async function claimShare(uid: string, token: string) {
+// edit/submit. The link alone is not enough: the signed-in account's email must
+// match the buyer's contact email (the address the invite was meant for). Once
+// claimed, identity is buyer_uid — the linked account keeps access even if the
+// owner later edits the contact email, and the email check is skipped for it.
+export async function claimShare(
+  uid: string,
+  email: string | undefined,
+  token: string
+) {
   const [row] = await db
     .select({ order: orders, buyer: buyers })
     .from(orders)
@@ -184,8 +210,17 @@ export async function claimShare(uid: string, token: string) {
     throw new Forbidden("This business is already linked to another account");
   }
   if (!buyer.buyerUid) {
+    if (
+      !buyer.contactEmail ||
+      !email ||
+      buyer.contactEmail.toLowerCase() !== email.toLowerCase()
+    ) {
+      throw new Forbidden(
+        "This invite was sent to a different email address. Sign in with the account that received it."
+      );
+    }
     await db.update(buyers).set({ buyerUid: uid }).where(eq(buyers.id, buyer.id));
-    await setRole(uid, "buyer");
+    await setRoleIfUnset(uid, "buyer");
   }
   return getOrder(uid, row.order.id);
 }

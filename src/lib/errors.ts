@@ -39,3 +39,10 @@ export class Conflict extends AppError {
     super(409, message);
   }
 }
+
+// Postgres unique-constraint violation (SQLSTATE 23505). node-postgres puts
+// `code` on the error itself; drizzle may re-wrap it under `cause`.
+export function isUniqueViolation(err: unknown): boolean {
+  const e = err as { code?: string; cause?: { code?: string } };
+  return e?.code === "23505" || e?.cause?.code === "23505";
+}

@@ -66,7 +66,7 @@ ordersRouter.post(
   "/share/:token/claim",
   requireAuth,
   asyncHandler(async (req: Request, res: Response) => {
-    res.json(await claimShare(req.uid!, req.params.token));
+    res.json(await claimShare(req.uid!, req.email, req.params.token));
   })
 );
 

@@ -1,50 +1,104 @@
 import { and, desc, eq, sql } from "drizzle-orm";
 import { db } from "../../db/client";
-import { buyers, orders } from "../../db/schema";
-import { NotFound } from "../../lib/errors";
+import { buyers, orders, users } from "../../db/schema";
+import { Conflict, NotFound, isUniqueViolation } from "../../lib/errors";
 
-// All buyer businesses that belong to an owner. `registered` is true when the
-// buyer already has an account — either already linked (buyer_uid) or their
-// contact email matches an existing user. Registered buyers can be sent orders
-// directly (no share link needed).
+// `registered` is true when the buyer already has a buyer account — either
+// already linked (buyer_uid) or their contact email matches an existing user
+// with role 'buyer'. The role filter matters: it keeps an owner's own account
+// from being treated as (and later auto-linked to) a buyer. Registered buyers
+// can be sent orders directly (no share link needed), so this predicate must
+// stay in sync with the auto-link query in orders.service.ts.
+const registeredSql = sql<boolean>`(${buyers.buyerUid} is not null or exists (
+  select 1 from users u
+  where lower(u.email) = lower(${buyers.contactEmail}) and u.role = 'buyer'
+))`;
+
+const buyerColumns = {
+  id: buyers.id,
+  ownerUid: buyers.ownerUid,
+  businessName: buyers.businessName,
+  firstName: buyers.firstName,
+  lastName: buyers.lastName,
+  contactEmail: buyers.contactEmail,
+  buyerUid: buyers.buyerUid,
+  createdAt: buyers.createdAt,
+  // The email of the Google account that actually claimed this buyer — shown
+  // to the owner when it differs from contactEmail.
+  accountEmail: users.email,
+};
+
+// All buyer businesses that belong to an owner.
 export async function listBuyers(ownerUid: string) {
   return db
-    .select({
-      id: buyers.id,
-      ownerUid: buyers.ownerUid,
-      businessName: buyers.businessName,
-      contactEmail: buyers.contactEmail,
-      buyerUid: buyers.buyerUid,
-      createdAt: buyers.createdAt,
-      registered: sql<boolean>`(${buyers.buyerUid} is not null or exists (
-        select 1 from users u where lower(u.email) = lower(${buyers.contactEmail})
-      ))`,
-    })
+    .select({ ...buyerColumns, registered: registeredSql })
     .from(buyers)
+    .leftJoin(users, eq(users.firebaseUid, buyers.buyerUid))
     .where(eq(buyers.ownerUid, ownerUid))
     .orderBy(desc(buyers.createdAt));
 }
 
 export async function createBuyer(
   ownerUid: string,
-  input: { businessName: string; contactEmail?: string | null }
+  input: {
+    businessName: string;
+    firstName: string;
+    lastName: string;
+    contactEmail: string;
+  }
 ) {
-  const [row] = await db
-    .insert(buyers)
-    .values({
-      ownerUid,
-      businessName: input.businessName,
-      contactEmail: input.contactEmail ?? null,
-    })
-    .returning();
-  return row;
+  try {
+    const [row] = await db
+      .insert(buyers)
+      .values({
+        ownerUid,
+        businessName: input.businessName,
+        firstName: input.firstName,
+        lastName: input.lastName,
+        contactEmail: input.contactEmail,
+      })
+      .returning();
+    return row;
+  } catch (err) {
+    if (isUniqueViolation(err))
+      throw new Conflict("You already have a buyer with this email");
+    throw err;
+  }
+}
+
+// Owner edits contact info. Never touches buyer_uid: once claimed, identity is
+// the linked account — changing the contact email must not unlink the buyer.
+export async function updateBuyer(
+  ownerUid: string,
+  buyerId: string,
+  input: {
+    businessName?: string;
+    firstName?: string;
+    lastName?: string;
+    contactEmail?: string;
+  }
+) {
+  try {
+    const [row] = await db
+      .update(buyers)
+      .set(input)
+      .where(and(eq(buyers.id, buyerId), eq(buyers.ownerUid, ownerUid)))
+      .returning();
+    if (!row) throw new NotFound("Buyer not found");
+    return row;
+  } catch (err) {
+    if (isUniqueViolation(err))
+      throw new Conflict("You already have a buyer with this email");
+    throw err;
+  }
 }
 
 // A single buyer (scoped to its owner) plus the orders under that business.
 export async function getBuyerWithOrders(ownerUid: string, buyerId: string) {
   const [buyer] = await db
-    .select()
+    .select(buyerColumns)
     .from(buyers)
+    .leftJoin(users, eq(users.firebaseUid, buyers.buyerUid))
     .where(and(eq(buyers.id, buyerId), eq(buyers.ownerUid, ownerUid)));
   if (!buyer) throw new NotFound("Buyer not found");
 
