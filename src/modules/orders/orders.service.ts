@@ -133,10 +133,12 @@ async function loadOrderItems(orderId: string) {
     .orderBy(orderItems.position);
 }
 
-// A comment as sent to the client: author side derived from the order's owner.
+// A comment as sent to the client: author side derived from the order's
+// owner; `unread` = written by the other side since the caller's last visit.
 function toCommentView(
   c: typeof orderItemComments.$inferSelect & { authorEmail: string | null },
-  ownerUid: string
+  ownerUid: string,
+  unread: boolean
 ) {
   return {
     id: c.id,
@@ -145,11 +147,17 @@ function toCommentView(
     authorEmail: c.authorEmail,
     body: c.body,
     createdAt: c.createdAt,
+    unread,
   };
 }
 
 // All comment threads for an order, keyed by item id (one query for the order).
-async function loadCommentsByItem(orderId: string, ownerUid: string) {
+async function loadCommentsByItem(
+  orderId: string,
+  ownerUid: string,
+  callerUid: string,
+  lastSeenAt: Date
+) {
   const rows = await db
     .select({
       id: orderItemComments.id,
@@ -167,7 +175,11 @@ async function loadCommentsByItem(orderId: string, ownerUid: string) {
 
   const byItem = new Map<string, ReturnType<typeof toCommentView>[]>();
   for (const row of rows) {
-    const view = toCommentView(row, ownerUid);
+    const unread =
+      row.authorUid !== callerUid &&
+      row.createdAt != null &&
+      row.createdAt > lastSeenAt;
+    const view = toCommentView(row, ownerUid, unread);
     const list = byItem.get(row.orderItemId) ?? [];
     list.push(view);
     byItem.set(row.orderItemId, list);
@@ -236,11 +248,18 @@ async function markOrderSeen(uid: string, orderId: string) {
 
 export async function getOrder(uid: string, orderId: string) {
   const { order, buyer } = await requireOrderAccess(uid, orderId);
+  // Read the previous visit time BEFORE stamping the new one, so this
+  // response can still flag which comments are new to the caller.
+  const [seen] = await db
+    .select({ lastSeenAt: orderReads.lastSeenAt })
+    .from(orderReads)
+    .where(and(eq(orderReads.orderId, orderId), eq(orderReads.uid, uid)));
+  const lastSeenAt = seen?.lastSeenAt ?? new Date(0);
   const [items, commentsByItem] = await Promise.all([
     loadOrderItems(orderId),
-    loadCommentsByItem(orderId, order.ownerUid),
-    markOrderSeen(uid, orderId),
+    loadCommentsByItem(orderId, order.ownerUid, uid, lastSeenAt),
   ]);
+  await markOrderSeen(uid, orderId);
   return {
     ...order,
     buyer,
@@ -431,7 +450,8 @@ export async function addItemComment(
     .where(eq(users.firebaseUid, uid));
   return toCommentView(
     { ...row, authorEmail: author?.email ?? null },
-    order.ownerUid
+    order.ownerUid,
+    false // your own message is never unread to you
   );
 }
 
