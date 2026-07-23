@@ -405,8 +405,14 @@ export async function addItemComment(
   );
 }
 
-// Buyer submits ("Send order").
-export async function submitOrder(uid: string, orderId: string) {
+// Buyer submits ("Send order"). Selections are edited locally in the client
+// and arrive here in one batch with the submit — one request, one transaction,
+// instead of an API call per checkbox tap.
+export async function submitOrder(
+  uid: string,
+  orderId: string,
+  items?: { id: string; selected?: boolean; buyerQty?: number }[]
+) {
   const { isBuyer } = await requireOrderAccess(uid, orderId);
   if (!isBuyer) throw new Forbidden("Only the buyer can send the order");
   const [order] = await db
@@ -416,9 +422,20 @@ export async function submitOrder(uid: string, orderId: string) {
   if (order.status !== "pending") {
     throw new BadRequest(`Order is already ${order.status}`);
   }
-  await db
-    .update(orders)
-    .set({ status: "submitted", submittedAt: sql`now()`, updatedAt: sql`now()` })
-    .where(eq(orders.id, orderId));
+  await db.transaction(async (tx) => {
+    for (const it of items ?? []) {
+      await tx
+        .update(orderItems)
+        .set({
+          ...(it.selected !== undefined ? { selected: it.selected } : {}),
+          ...(it.buyerQty !== undefined ? { buyerQty: it.buyerQty } : {}),
+        })
+        .where(and(eq(orderItems.id, it.id), eq(orderItems.orderId, orderId)));
+    }
+    await tx
+      .update(orders)
+      .set({ status: "submitted", submittedAt: sql`now()`, updatedAt: sql`now()` })
+      .where(eq(orders.id, orderId));
+  });
   return getOrder(uid, orderId);
 }

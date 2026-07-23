@@ -155,11 +155,24 @@ ordersRouter.post(
   })
 );
 
+const submitSchema = z.object({
+  items: z
+    .array(
+      z.object({
+        id: z.uuid(),
+        selected: z.boolean().optional(),
+        buyerQty: z.number().int().nonnegative().optional(),
+      })
+    )
+    .optional(),
+});
+
 ordersRouter.post(
   "/orders/:id/submit",
   requireAuth,
   asyncHandler(async (req: Request, res: Response) => {
     const id = parse(idParam, req.params.id);
-    res.json(await submitOrder(req.uid!, id));
+    const { items } = parse(submitSchema, req.body ?? {});
+    res.json(await submitOrder(req.uid!, id, items));
   })
 );
