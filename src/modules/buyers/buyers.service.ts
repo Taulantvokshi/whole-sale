@@ -131,6 +131,16 @@ export async function getBuyerWithOrders(ownerUid: string, buyerId: string) {
       submittedAt: orders.submittedAt,
       buyerId: orders.buyerId,
       ownerUid: orders.ownerUid,
+      unreadComments: sql<number>`cast((
+        select count(*) from order_item_comments c
+        join order_items oi on oi.id = c.order_item_id
+        where oi.order_id = ${orders.id}
+          and c.author_uid <> ${ownerUid}
+          and c.created_at > coalesce(
+            (select r.last_seen_at from order_reads r
+              where r.order_id = ${orders.id} and r.uid = ${ownerUid}),
+            'epoch'::timestamptz)
+      ) as int)`,
       itemCount: sql<number>`cast(count(${orderItems.id}) as int)`,
       selectedUnits: sql<number>`cast(coalesce(sum(case when ${orderItems.selected} then ${orderItems.buyerQty} else 0 end), 0) as int)`,
       totalValue: sql<number>`cast(coalesce(sum(case when ${orderItems.selected} then ${orderItems.buyerQty} * coalesce(${orderItems.wholesalePrice}, 0) else 0 end), 0) as float8)`,

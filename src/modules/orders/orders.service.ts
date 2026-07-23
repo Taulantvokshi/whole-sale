@@ -5,6 +5,7 @@ import {
   orders,
   orderItems,
   orderItemComments,
+  orderReads,
   templates,
   templateItems,
   buyers,
@@ -192,6 +193,7 @@ export async function listOrders(uid: string) {
       // Which store sent the sheet — lets the buyer group orders by store.
       ownerUid: orders.ownerUid,
       storeName: shops.shop,
+      unreadComments: unreadCommentsSql(uid),
       itemCount: sql<number>`cast(count(${orderItems.id}) as int)`,
       selectedUnits: sql<number>`cast(coalesce(sum(case when ${orderItems.selected} then ${orderItems.buyerQty} else 0 end), 0) as int)`,
       totalValue: sql<number>`cast(coalesce(sum(case when ${orderItems.selected} then ${orderItems.buyerQty} * coalesce(${orderItems.wholesalePrice}, 0) else 0 end), 0) as float8)`,
@@ -205,11 +207,39 @@ export async function listOrders(uid: string) {
     .orderBy(desc(orders.createdAt));
 }
 
+// Comments from the other side newer than the caller's last visit — the
+// unread badge on order cards. Kept as a scalar subquery so the rollup joins
+// in listOrders don't multiply rows.
+function unreadCommentsSql(uid: string) {
+  return sql<number>`cast((
+    select count(*) from order_item_comments c
+    join order_items oi on oi.id = c.order_item_id
+    where oi.order_id = ${orders.id}
+      and c.author_uid <> ${uid}
+      and c.created_at > coalesce(
+        (select r.last_seen_at from order_reads r
+          where r.order_id = ${orders.id} and r.uid = ${uid}),
+        'epoch'::timestamptz)
+  ) as int)`;
+}
+
+// Opening an order marks it read for the caller (clears their unread badge).
+async function markOrderSeen(uid: string, orderId: string) {
+  await db
+    .insert(orderReads)
+    .values({ orderId, uid })
+    .onConflictDoUpdate({
+      target: [orderReads.orderId, orderReads.uid],
+      set: { lastSeenAt: sql`now()` },
+    });
+}
+
 export async function getOrder(uid: string, orderId: string) {
   const { order, buyer } = await requireOrderAccess(uid, orderId);
   const [items, commentsByItem] = await Promise.all([
     loadOrderItems(orderId),
     loadCommentsByItem(orderId, order.ownerUid),
+    markOrderSeen(uid, orderId),
   ]);
   return {
     ...order,

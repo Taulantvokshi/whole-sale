@@ -9,6 +9,7 @@ import {
   timestamp,
   uuid,
   uniqueIndex,
+  primaryKey,
 } from "drizzle-orm/pg-core";
 
 // --- Existing tables (already present in the live DB) ---
@@ -137,6 +138,21 @@ export const orderItemComments = pgTable("order_item_comments", {
   body: text("body").notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
 });
+
+// When a user last opened an order — drives unread-comment badges.
+export const orderReads = pgTable(
+  "order_reads",
+  {
+    orderId: uuid("order_id")
+      .notNull()
+      .references(() => orders.id, { onDelete: "cascade" }),
+    uid: text("uid").notNull(),
+    lastSeenAt: timestamp("last_seen_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.orderId, t.uid] })]
+);
 
 // Inferred row types for use across services/routes.
 export type UserRow = typeof users.$inferSelect;
